@@ -1,0 +1,420 @@
+import { useState, useEffect, useRef } from "react";
+
+const ADMIN_PASSWORD = "novelia2024";
+
+const SUBGENRES = [
+  { id: "amor_prohibido", label: "Amor Prohibido", color: "#c2185b" },
+  { id: "segunda_oportunidad", label: "Segunda Oportunidad", color: "#ad1457" },
+  { id: "enemigos_amantes", label: "Enemigos a Amantes", color: "#880e4f" },
+  { id: "romance_historico", label: "Romance Histórico", color: "#6a1040" },
+  { id: "amor_sobrenatural", label: "Amor Sobrenatural", color: "#4a148c" },
+  { id: "romance_moderno", label: "Romance Moderno", color: "#d81b60" },
+];
+
+const getSub = (id) => SUBGENRES.find(s => s.id === id) || SUBGENRES[0];
+
+// Storage helpers (localStorage para producción real)
+const loadNovels = () => {
+  try {
+    const data = localStorage.getItem("novelia-romance-novels");
+    return data ? JSON.parse(data) : [];
+  } catch { return []; }
+};
+const saveNovels = (novels) => {
+  localStorage.setItem("novelia-romance-novels", JSON.stringify(novels));
+};
+
+export default function Novelia() {
+  const [mode, setMode] = useState("reader");
+  const [novels, setNovels] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    setNovels(loadNovels());
+    setLoading(false);
+  }, []);
+
+  const refresh = () => setNovels(loadNovels());
+
+  if (loading) return <Loader />;
+
+  return (
+    <div style={s.app}>
+      <style>{css}</style>
+      <div style={s.petals} aria-hidden>
+        {[...Array(12)].map((_, i) => <div key={i} style={s.petal(i)} className="petal" />)}
+      </div>
+      <div style={s.wrap}>
+        {mode === "reader" && <ReaderView novels={novels} onAdmin={() => setMode("admin-login")} />}
+        {mode === "admin-login" && <AdminLogin onSuccess={() => setMode("admin")} onBack={() => setMode("reader")} />}
+        {mode === "admin" && <AdminPanel novels={novels} setNovels={setNovels} onRefresh={refresh} onBack={() => setMode("reader")} />}
+      </div>
+    </div>
+  );
+}
+
+function ReaderView({ novels, onAdmin }) {
+  const [selected, setSelected] = useState(null);
+  const [filter, setFilter] = useState("all");
+
+  const filtered = filter === "all" ? novels : novels.filter(n => n.subgenre === filter);
+
+  if (selected) return <NovelPlayer novel={selected} onBack={() => setSelected(null)} />;
+
+  return (
+    <div className="fade">
+      <div style={s.header}>
+        <div style={{ textAlign: "center", flex: 1 }}>
+          <div style={s.logo}>💕 NOVELIA</div>
+          <div style={s.logoSub}>Historias de amor narradas por Inteligencia Artificial</div>
+        </div>
+        <button style={s.gearBtn} onClick={onAdmin} title="Admin">⚙</button>
+      </div>
+
+      <div style={s.hero}>
+        <div style={s.heroBadge}>✨ Audiolibros de Romance</div>
+        <h1 style={s.heroTitle}>Déjate llevar por el amor</h1>
+        <p style={s.heroSub}>
+          {novels.length === 0
+            ? "Las primeras historias están llegando pronto..."
+            : `${novels.length} ${novels.length === 1 ? "historia disponible" : "historias de amor disponibles"} · Escúchalas gratis`}
+        </p>
+      </div>
+
+      {novels.length > 0 && (
+        <div style={s.filterScroll}>
+          <button style={s.chip(filter === "all", "#e91e8c")} onClick={() => setFilter("all")}>Todas 💕</button>
+          {SUBGENRES.filter(sg => novels.some(n => n.subgenre === sg.id)).map(sg => (
+            <button key={sg.id} style={s.chip(filter === sg.id, sg.color)} onClick={() => setFilter(sg.id)}>
+              {sg.label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {filtered.length === 0 ? (
+        <div style={s.empty}>
+          <div style={{ fontSize: 64, marginBottom: 16 }}>🌹</div>
+          <p style={{ color: "rgba(255,182,193,0.4)", fontSize: 16 }}>Las historias llegan pronto...</p>
+        </div>
+      ) : (
+        <div style={s.grid}>
+          {filtered.map(novel => {
+            const sg = getSub(novel.subgenre);
+            const mins = Math.ceil(novel.text.split(" ").length / 130);
+            return (
+              <div key={novel.id} style={s.card} className="card-hover" onClick={() => setSelected(novel)}>
+                <div style={s.cardTop(sg.color)}>
+                  <span style={s.subBadge(sg.color)}>{sg.label}</span>
+                  <span style={s.duration}>🎧 {mins} min</span>
+                </div>
+                <div style={s.cardBody}>
+                  <div style={s.cardTitle}>"{novel.title}"</div>
+                  <div style={s.cardPreview}>{novel.text.slice(0, 110)}...</div>
+                </div>
+                <div style={s.cardFooter}>
+                  <span style={{ color: "rgba(255,182,193,0.3)", fontSize: 11 }}>{novel.date}</span>
+                  <span style={s.playBtn2}>▶ Escuchar</span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function NovelPlayer({ novel, onBack }) {
+  const [playing, setPlaying] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [voices, setVoices] = useState([]);
+  const [voice, setVoice] = useState(null);
+  const synth = useRef(window.speechSynthesis);
+  const sg = getSub(novel.subgenre);
+
+  useEffect(() => {
+    const load = () => {
+      const v = synth.current.getVoices().filter(v => v.lang.startsWith("es"));
+      setVoices(v);
+      if (v.length && !voice) setVoice(v[0]);
+    };
+    load();
+    synth.current.onvoiceschanged = load;
+    return () => synth.current.cancel();
+  }, []);
+
+  const speak = () => {
+    synth.current.cancel();
+    const words = novel.text.split(" ");
+    let wi = 0;
+    const u = new SpeechSynthesisUtterance(novel.text);
+    if (voice) u.voice = voice;
+    u.rate = 0.88; u.pitch = 1.05; u.lang = "es-ES";
+    u.onboundary = e => { if (e.name === "word") { wi++; setProgress(Math.round(wi / words.length * 100)); } };
+    u.onend = () => { setPlaying(false); setProgress(100); };
+    synth.current.speak(u);
+    setPlaying(true);
+  };
+
+  const toggle = () => {
+    if (playing) { synth.current.pause(); setPlaying(false); }
+    else if (synth.current.paused) { synth.current.resume(); setPlaying(true); }
+    else speak();
+  };
+
+  const stop = () => { synth.current.cancel(); setPlaying(false); setProgress(0); };
+
+  return (
+    <div className="fade">
+      <button style={s.backBtn} onClick={() => { stop(); onBack(); }}>← Volver a las historias</button>
+      <div style={s.playerHero}>
+        <div style={{ fontSize: 56, marginBottom: 12 }}>🌹</div>
+        <span style={s.subBadge(sg.color)}>{sg.label}</span>
+        <h2 style={s.playerTitle}>"{novel.title}"</h2>
+        <p style={{ color: "rgba(255,182,193,0.3)", fontSize: 12, letterSpacing: 1 }}>
+          {novel.date} · ~{Math.ceil(novel.text.split(" ").length / 130)} minutos
+        </p>
+      </div>
+
+      <div style={s.playerBox}>
+        <div style={s.progTrack}><div style={s.progFill(progress)} /></div>
+        <p style={{ textAlign: "center", fontSize: 12, color: "rgba(255,182,193,0.35)", marginBottom: 20, letterSpacing: 1 }}>
+          {playing ? "🎙 Narrando tu historia de amor..." : progress === 100 ? "✨ Historia finalizada" : "Presiona ▶ para escuchar"}
+        </p>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 16 }}>
+          {voices.length > 0 && (
+            <select style={s.voiceSel} value={voice?.name || ""}
+              onChange={e => { stop(); setVoice(voices.find(v => v.name === e.target.value)); }}>
+              {voices.map(v => <option key={v.name} value={v.name}>{v.name.split(" ").slice(0,2).join(" ")}</option>)}
+            </select>
+          )}
+          <button style={s.stopCircle} onClick={stop}>⏹</button>
+          <button style={s.playCircle} onClick={toggle}>{playing ? "⏸" : "▶"}</button>
+        </div>
+      </div>
+
+      <div style={s.textBox}>
+        <p style={s.novelText}>{novel.text}</p>
+      </div>
+    </div>
+  );
+}
+
+function AdminLogin({ onSuccess, onBack }) {
+  const [pw, setPw] = useState("");
+  const [err, setErr] = useState(false);
+  const check = () => {
+    if (pw === ADMIN_PASSWORD) onSuccess();
+    else { setErr(true); setTimeout(() => setErr(false), 2000); }
+  };
+  return (
+    <div className="fade" style={{ maxWidth: 340, margin: "80px auto", textAlign: "center" }}>
+      <button style={s.backBtn} onClick={onBack}>← Volver</button>
+      <div style={{ fontSize: 40, marginBottom: 12 }}>🔐</div>
+      <h2 style={{ color: "#f48fb1", fontWeight: "normal", fontStyle: "italic", marginBottom: 6 }}>Panel Admin</h2>
+      <p style={{ color: "rgba(255,182,193,0.3)", fontSize: 13, marginBottom: 24 }}>Solo para el equipo de Novelia</p>
+      <input type="password" placeholder="Contraseña" value={pw}
+        onChange={e => setPw(e.target.value)} onKeyDown={e => e.key === "Enter" && check()}
+        style={{ ...s.inputField, borderColor: err ? "#ef4444" : "rgba(244,143,177,0.3)" }}
+        autoFocus />
+      {err && <p style={{ color: "#ef4444", fontSize: 13, marginBottom: 8 }}>Contraseña incorrecta</p>}
+      <button style={s.roseBtn} onClick={check}>Entrar</button>
+    </div>
+  );
+}
+
+function AdminPanel({ novels, setNovels, onRefresh, onBack }) {
+  const [subgenre, setSubgenre] = useState("amor_prohibido");
+  const [tema, setTema] = useState("");
+  const [tone, setTone] = useState("apasionado");
+  const [generating, setGenerating] = useState(false);
+  const [log, setLog] = useState("");
+  const [deleting, setDeleting] = useState(null);
+
+  const generate = async () => {
+    if (!tema.trim()) return;
+    setGenerating(true);
+    setLog("✍️ Escribiendo tu historia de amor...");
+
+    try {
+      const res = await fetch("/api/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ subgenre, tema: tema.trim(), tone }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+
+      const novel = {
+        id: Date.now(),
+        title: data.title,
+        text: data.text,
+        subgenre, tema: tema.trim(), tone,
+        date: new Date().toLocaleDateString("es-DO"),
+        words: data.text.split(" ").length,
+      };
+
+      const updated = [novel, ...novels];
+      saveNovels(updated);
+      setNovels(updated);
+      setLog(`✅ "${data.title}" publicada con éxito.`);
+      setTema("");
+    } catch (e) {
+      setLog("❌ Error al generar. Verifica tu API Key en Vercel.");
+    }
+    setGenerating(false);
+  };
+
+  const del = (id) => {
+    const updated = novels.filter(n => n.id !== id);
+    saveNovels(updated);
+    setNovels(updated);
+    setDeleting(null);
+  };
+
+  return (
+    <div className="fade">
+      <div style={s.header}>
+        <div style={{ flex: 1 }}>
+          <div style={s.logo}>💕 NOVELIA <span style={{ color: "#ef4444", fontSize: 11 }}>ADMIN</span></div>
+          <div style={s.logoSub}>Publicación de historias de romance</div>
+        </div>
+        <button style={s.gearBtn} onClick={onBack}>← Salir</button>
+      </div>
+
+      <div style={s.adminCard}>
+        <h3 style={s.adminH3}>✨ Nueva historia de amor</h3>
+
+        <label style={s.label}>Subgénero</label>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 20 }}>
+          {SUBGENRES.map(sg => (
+            <button key={sg.id} style={s.chip(subgenre === sg.id, sg.color)} onClick={() => setSubgenre(sg.id)}>
+              {sg.label}
+            </button>
+          ))}
+        </div>
+
+        <label style={s.label}>Tono de la historia</label>
+        <div style={{ display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap" }}>
+          {["apasionado", "tierno", "intenso", "melancólico", "picante"].map(t => (
+            <button key={t} style={s.chip(tone === t, "#e91e8c")} onClick={() => setTone(t)}>{t}</button>
+          ))}
+        </div>
+
+        <label style={s.label}>Argumento o tema</label>
+        <textarea style={{ ...s.inputField, height: 90, resize: "vertical" }}
+          placeholder="Ej: Una repostera dominicana hereda la panadería de su abuela y el nuevo comprador resulta ser su primer amor de la infancia..."
+          value={tema} onChange={e => setTema(e.target.value)} />
+
+        <button style={{ ...s.roseBtn, opacity: generating || !tema.trim() ? 0.5 : 1 }}
+          onClick={generate} disabled={generating || !tema.trim()}>
+          {generating ? "⏳ Escribiendo historia..." : "🌹 Publicar historia"}
+        </button>
+
+        {log && <p style={{ marginTop: 12, fontSize: 13, color: log.startsWith("✅") ? "#4ade80" : log.startsWith("❌") ? "#ef4444" : "#f48fb1" }}>{log}</p>}
+      </div>
+
+      <h3 style={{ ...s.adminH3, marginTop: 28, marginBottom: 12 }}>📚 Historias publicadas ({novels.length})</h3>
+
+      {novels.length === 0 ? (
+        <p style={{ color: "rgba(255,182,193,0.3)", textAlign: "center", padding: 32 }}>¡Publica tu primera historia!</p>
+      ) : novels.map(novel => {
+        const sg = getSub(novel.subgenre);
+        return (
+          <div key={novel.id} style={s.adminRow}>
+            <div style={{ flex: 1 }}>
+              <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 4 }}>
+                <span style={s.subBadge(sg.color)}>{sg.label}</span>
+                <span style={{ color: "rgba(255,182,193,0.25)", fontSize: 11 }}>{novel.date} · {novel.words} palabras</span>
+              </div>
+              <div style={{ color: "#fce4ec", fontStyle: "italic" }}>"{novel.title}"</div>
+              <div style={{ color: "rgba(255,182,193,0.35)", fontSize: 12, marginTop: 3 }}>Tema: {novel.tema}</div>
+            </div>
+            <div style={{ flexShrink: 0 }}>
+              {deleting === novel.id ? (
+                <div style={{ display: "flex", gap: 6 }}>
+                  <button style={s.dangerBtn} onClick={() => del(novel.id)}>Confirmar</button>
+                  <button style={s.gearBtn} onClick={() => setDeleting(null)}>Cancelar</button>
+                </div>
+              ) : (
+                <button style={s.gearBtn} onClick={() => setDeleting(novel.id)}>🗑</button>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function Loader() {
+  return (
+    <div style={{ ...s.app, display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <div style={{ textAlign: "center" }}>
+        <div style={{ fontSize: 40, marginBottom: 16 }}>💕</div>
+        <div style={{ display: "flex", gap: 8, justifyContent: "center" }}>
+          {[0,1,2].map(i => <div key={i} style={{ width: 8, height: 8, borderRadius: "50%", background: "#f48fb1", animation: `pulse 1.4s ${i*0.2}s infinite ease-in-out` }} />)}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const s = {
+  app: { minHeight: "100vh", background: "linear-gradient(160deg, #0d0007 0%, #1a0010 40%, #0d0007 80%, #10000a 100%)", fontFamily: "'Georgia', serif", color: "#fce4ec", position: "relative", overflow: "hidden" },
+  petals: { position: "fixed", inset: 0, pointerEvents: "none", zIndex: 0 },
+  petal: (i) => ({ position: "absolute", width: 6 + (i % 3) * 4, height: 6 + (i % 3) * 4, borderRadius: "50% 0 50% 0", background: `rgba(233,30,99,${0.03 + (i % 4) * 0.02})`, left: `${(i * 137.5) % 100}%`, top: `${(i * 89.3) % 100}%`, animation: `float ${8 + i * 1.5}s ${i * 0.7}s ease-in-out infinite alternate`, transform: `rotate(${i * 45}deg)` }),
+  wrap: { position: "relative", zIndex: 1, maxWidth: 780, margin: "0 auto", padding: "20px 16px 60px" },
+  header: { display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid rgba(244,143,177,0.1)", paddingBottom: 16, marginBottom: 32 },
+  logo: { fontSize: 18, letterSpacing: 5, color: "#f48fb1", textTransform: "uppercase" },
+  logoSub: { fontSize: 10, color: "rgba(244,143,177,0.35)", letterSpacing: 2, marginTop: 3 },
+  gearBtn: { background: "none", border: "1px solid rgba(244,143,177,0.2)", color: "rgba(244,143,177,0.5)", padding: "6px 12px", borderRadius: 6, cursor: "pointer", fontSize: 13 },
+  hero: { textAlign: "center", padding: "20px 0 36px" },
+  heroBadge: { display: "inline-block", background: "rgba(233,30,99,0.15)", border: "1px solid rgba(233,30,99,0.3)", color: "#f48fb1", fontSize: 12, padding: "5px 16px", borderRadius: 20, letterSpacing: 2, marginBottom: 16 },
+  heroTitle: { fontSize: 38, fontWeight: "normal", fontStyle: "italic", color: "#f48fb1", marginBottom: 10, lineHeight: 1.25, textShadow: "0 0 40px rgba(233,30,99,0.3)" },
+  heroSub: { color: "rgba(255,182,193,0.4)", fontSize: 14, letterSpacing: 1 },
+  filterScroll: { display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 28 },
+  chip: (active, color) => ({ background: active ? `${color}25` : "rgba(255,255,255,0.03)", border: `1px solid ${active ? color : "rgba(244,143,177,0.15)"}`, color: active ? color : "rgba(255,182,193,0.45)", padding: "6px 14px", borderRadius: 20, cursor: "pointer", fontSize: 12, letterSpacing: 0.5, transition: "all 0.2s" }),
+  grid: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 16 },
+  card: { background: "linear-gradient(145deg, rgba(233,30,99,0.05), rgba(0,0,0,0.3))", border: "1px solid rgba(244,143,177,0.1)", borderRadius: 14, overflow: "hidden", cursor: "pointer", transition: "all 0.25s" },
+  cardTop: (color) => ({ background: `linear-gradient(135deg, ${color}22, transparent)`, borderBottom: `1px solid ${color}22`, padding: "12px 16px", display: "flex", justifyContent: "space-between", alignItems: "center" }),
+  subBadge: (color) => ({ background: `${color}20`, border: `1px solid ${color}40`, color, fontSize: 11, padding: "3px 10px", borderRadius: 20, letterSpacing: 0.5 }),
+  duration: { color: "rgba(255,182,193,0.35)", fontSize: 11 },
+  cardBody: { padding: "16px 16px 10px" },
+  cardTitle: { fontSize: 15, fontStyle: "italic", color: "#fce4ec", marginBottom: 10, lineHeight: 1.4 },
+  cardPreview: { fontSize: 12, color: "rgba(255,182,193,0.3)", lineHeight: 1.7 },
+  cardFooter: { padding: "10px 16px 14px", display: "flex", justifyContent: "space-between", alignItems: "center" },
+  playBtn2: { background: "rgba(233,30,99,0.2)", border: "1px solid rgba(233,30,99,0.35)", color: "#f48fb1", fontSize: 12, padding: "4px 14px", borderRadius: 20 },
+  empty: { textAlign: "center", padding: "64px 0" },
+  backBtn: { background: "none", border: "none", color: "rgba(244,143,177,0.4)", cursor: "pointer", fontSize: 13, letterSpacing: 1, padding: 0, marginBottom: 24, display: "block" },
+  playerHero: { textAlign: "center", padding: "16px 0 28px" },
+  playerTitle: { fontSize: 28, fontStyle: "italic", color: "#f48fb1", fontWeight: "normal", margin: "10px 0 6px", lineHeight: 1.3, textShadow: "0 0 30px rgba(233,30,99,0.4)" },
+  playerBox: { background: "rgba(0,0,0,0.3)", border: "1px solid rgba(244,143,177,0.12)", borderRadius: 14, padding: 24, marginBottom: 28 },
+  progTrack: { height: 3, background: "rgba(244,143,177,0.12)", borderRadius: 2, marginBottom: 8 },
+  progFill: (p) => ({ height: "100%", width: `${p}%`, borderRadius: 2, background: "linear-gradient(90deg, #880e4f, #f48fb1)", transition: "width 0.4s" }),
+  voiceSel: { background: "rgba(255,255,255,0.05)", border: "1px solid rgba(244,143,177,0.2)", color: "#fce4ec", padding: "6px 10px", borderRadius: 6, fontSize: 12, outline: "none" },
+  stopCircle: { width: 40, height: 40, borderRadius: "50%", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(244,143,177,0.2)", color: "#f48fb1", cursor: "pointer", fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center" },
+  playCircle: { width: 58, height: 58, borderRadius: "50%", background: "linear-gradient(135deg, #c2185b, #e91e8c)", border: "none", color: "#fff", cursor: "pointer", fontSize: 24, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 0 24px rgba(233,30,99,0.5)" },
+  textBox: { background: "rgba(233,30,99,0.04)", border: "1px solid rgba(244,143,177,0.08)", borderRadius: 12, padding: 24 },
+  novelText: { lineHeight: 2, fontSize: 15, color: "rgba(252,228,236,0.8)", whiteSpace: "pre-wrap", margin: 0 },
+  inputField: { width: "100%", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(244,143,177,0.25)", color: "#fce4ec", padding: "12px 14px", borderRadius: 8, fontSize: 14, outline: "none", fontFamily: "Georgia, serif", boxSizing: "border-box", display: "block", marginBottom: 16 },
+  roseBtn: { width: "100%", padding: 14, background: "linear-gradient(135deg, #c2185b, #e91e8c)", border: "none", borderRadius: 8, color: "#fff", fontSize: 14, letterSpacing: 2, textTransform: "uppercase", cursor: "pointer", fontFamily: "Georgia, serif", fontWeight: "bold" },
+  adminCard: { background: "rgba(233,30,99,0.04)", border: "1px solid rgba(244,143,177,0.12)", borderRadius: 12, padding: 24, marginBottom: 20 },
+  adminH3: { color: "#f48fb1", fontWeight: "normal", fontStyle: "italic", fontSize: 17, marginBottom: 20 },
+  label: { display: "block", fontSize: 11, letterSpacing: 2, textTransform: "uppercase", color: "rgba(244,143,177,0.4)", marginBottom: 10 },
+  adminRow: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, background: "rgba(255,255,255,0.02)", border: "1px solid rgba(244,143,177,0.07)", borderRadius: 10, padding: 16, marginBottom: 8 },
+  dangerBtn: { background: "rgba(239,68,68,0.15)", border: "1px solid rgba(239,68,68,0.35)", color: "#ef4444", padding: "5px 10px", borderRadius: 6, cursor: "pointer", fontSize: 12 },
+};
+
+const css = `
+  @keyframes pulse { 0%,80%,100%{opacity:.15;transform:scale(.7)} 40%{opacity:1;transform:scale(1)} }
+  @keyframes fadeIn { from{opacity:0;transform:translateY(10px)} to{opacity:1;transform:translateY(0)} }
+  @keyframes float { from{transform:translateY(0) rotate(0deg)} to{transform:translateY(-20px) rotate(180deg)} }
+  .fade { animation: fadeIn 0.4s ease forwards; }
+  .card-hover:hover { transform: translateY(-4px) !important; border-color: rgba(244,143,177,0.25) !important; box-shadow: 0 8px 32px rgba(233,30,99,0.15) !important; }
+  button:hover { opacity: 0.82; }
+  ::placeholder { color: rgba(244,143,177,0.2); }
+  select option { background: #1a0010; color: #fce4ec; }
+`;
